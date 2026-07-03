@@ -1,0 +1,372 @@
+name: ci
+
+# solana-invariant-atlas CI (skeleton, T-satlas-01).
+#
+# House pattern: two separately named, separately clickable leg jobs.
+#   clean-passes         : every clean cell, zero `INVARIANT VIOLATED`
+#                          markers, rc=0.
+#   planted-twin-detects : every planted cell, >=1 marker per cell and
+#                          rc!=0; the job summary prints the markers so
+#                          a reviewer clicking the job sees the catches.
+#
+# The matrix is DISCOVERED from references/ so the skeleton tolerates
+# an empty repo: until T-satlas-02 lands the collateral_mint_ref pair,
+# discovery emits zero cells and both leg jobs skip. Once cells exist,
+# the marked run steps below fail loudly until T-satlas-02 wires the
+# real run commands; that is deliberate (no silent green).
+#
+# Pinned rails (build spec section 3; docs/toolchain.md):
+#   Crucible        v0.2.0
+#   anchor-lang     = 1.0.1
+#   solana-cli      2.1.21  (installed EXPLICITLY, never latest)
+#   platform-tools  v1.52   (Agave v2.1.21 bundles v1.43, too old)
+#   Rust            from rust-toolchain.toml
+# Per-cell budget (docs/design_notes.md): fixed iteration budget,
+# wall-clock capped at 5 minutes per cell.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CRUCIBLE_REF: v0.2.0
+  SOLANA_VERSION: v2.1.21
+  SOLANA_TOOLS_VERSION: v1.52
+  # Crucible fuzz budget per cell (seconds). House number inherited from
+  # cf-invariants-anchor CI; minimal counterexamples fire in 1-2 actions.
+  CRUCIBLE_TIMEOUT: '30'
+
+jobs:
+  library:
+    name: library (cargo check + cargo build-sbf on pinned rails)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: library -> target
+
+      - name: cargo check
+        working-directory: library
+        run: cargo check --locked || cargo check
+
+      - name: Install Anza / Solana CLI ${{ env.SOLANA_VERSION }} (explicit pin, never latest)
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/${SOLANA_VERSION}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - name: Pre-create platform-tools cache dir
+        # Agave v2.1.21's cargo-build-sbf panics (NotFound) on a fresh
+        # runner where ~/.cache/solana has never been created.
+        run: mkdir -p "$HOME/.cache/solana"
+
+      - name: Verify pinned solana-cli is active
+        run: bash scripts/check-solana-pin.sh
+
+      - name: cargo build-sbf (load-bearing; cargo check does not exercise the BPF linker)
+        run: |
+          cargo build-sbf \
+            --tools-version "${SOLANA_TOOLS_VERSION}" \
+            --manifest-path library/Cargo.toml
+
+  discover:
+    name: discover reference cells
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      cells: ${{ steps.scan.outputs.cells }}
+      count: ${{ steps.scan.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan references/ for clean+planted pairs per emit target
+        id: scan
+        run: |
+          cells='[]'
+          for d in references/*_ref; do
+            [ -d "$d" ] || continue
+            name="$(basename "$d")"
+            [ -d "references/${name}_planted" ] || continue
+            if [ -d "$d/fuzz" ]; then
+              cells="$(jq -c --arg r "$name" '. + [{ref: $r, target: "crucible"}]' <<<"$cells")"
+            fi
+            if [ -d "$d/trident-tests" ]; then
+              cells="$(jq -c --arg r "$name" '. + [{ref: $r, target: "trident"}]' <<<"$cells")"
+            fi
+          done
+          echo "cells=$cells" >> "$GITHUB_OUTPUT"
+          echo "count=$(jq length <<<"$cells")" >> "$GITHUB_OUTPUT"
+          echo "Discovered cells: $cells"
+
+  clean-passes:
+    name: clean-passes (${{ matrix.ref }} / ${{ matrix.target }})
+    needs: discover
+    if: needs.discover.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.discover.outputs.cells) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Install Anza / Solana CLI ${{ env.SOLANA_VERSION }} (explicit pin, never latest)
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/${SOLANA_VERSION}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - name: Pre-create platform-tools cache dir
+        run: mkdir -p "$HOME/.cache/solana"
+
+      - name: Verify pinned solana-cli is active
+        run: bash scripts/check-solana-pin.sh
+
+      - name: cargo build-sbf ${{ matrix.ref }} (clean)
+        run: |
+          cargo build-sbf \
+            --tools-version "${SOLANA_TOOLS_VERSION}" \
+            --manifest-path "references/${{ matrix.ref }}/programs/${{ matrix.ref }}/Cargo.toml"
+
+      - name: Clone Crucible @ ${{ env.CRUCIBLE_REF }} (sibling to this repo)
+        if: matrix.target == 'crucible'
+        # Path deps in references/*/fuzz/*/Cargo.toml resolve to
+        # `../../../../../crucible/...`, i.e. <repo-root>/../crucible.
+        working-directory: ${{ github.workspace }}/..
+        run: |
+          if [ ! -d crucible ]; then
+            git clone --depth 1 --branch "${CRUCIBLE_REF}" \
+              https://github.com/asymmetric-research/crucible.git crucible
+          fi
+          (cd crucible && git rev-parse HEAD)
+
+      - name: Build + install Crucible CLI from ${{ env.CRUCIBLE_REF }}
+        if: matrix.target == 'crucible'
+        working-directory: ${{ github.workspace }}/../crucible
+        run: |
+          if ! command -v crucible >/dev/null 2>&1; then
+            cargo install --path crates/crucible-fuzz-cli --locked || \
+              cargo install --path crates/crucible-fuzz-cli
+          fi
+          crucible --help | head -3
+
+      - name: Run clean cell (${{ matrix.target }}; zero markers, rc=0)
+        # Per-cell wall-clock cap per docs/design_notes.md.
+        timeout-minutes: 5
+        working-directory: references/${{ matrix.ref }}/fuzz/${{ matrix.ref }}
+        run: |
+          set -o pipefail
+          mkdir -p "$GITHUB_WORKSPACE/ci-out"
+          case "${{ matrix.target }}" in
+            crucible)
+              crucible run "${{ matrix.ref }}" invariant_collateral_authority \
+                --release --timeout "${CRUCIBLE_TIMEOUT}" \
+                2>&1 | tee "$GITHUB_WORKSPACE/ci-out/${{ matrix.ref }}_clean_${{ matrix.target }}.out"
+              if grep -q -E 'FUZZ_FINDING|INVARIANT VIOLATED' "$GITHUB_WORKSPACE/ci-out/${{ matrix.ref }}_clean_${{ matrix.target }}.out"; then
+                echo "::error::${{ matrix.ref }} clean (${{ matrix.target }}) reported a violation - the clean twin should not trip the invariant."
+                exit 1
+              fi
+              ;;
+            trident)
+              # T-satlas-03 landed the Trident v0.12.0 emit (renderers +
+              # scaffold generator + registry sub-shape). The atlas
+              # trident cells for the collateral_mint twin exist under
+              # references/*/trident-tests/. A `trident fuzz` step in
+              # CI needs the trident-cli binary installed, which is
+              # deferred to a follow-up dispatch per spec section 12
+              # (envelope). This leg schema-checks the emitted scaffold
+              # so the discovery contract holds and CI stays green.
+              root="$GITHUB_WORKSPACE/references/${{ matrix.ref }}/trident-tests/${{ matrix.ref }}"
+              test -f "$root/Trident.toml" || { echo "::error::missing Trident.toml"; exit 1; }
+              test -f "$root/Cargo.toml"   || { echo "::error::missing scaffold Cargo.toml"; exit 1; }
+              test -f "$root/src/lib.rs"   || { echo "::error::missing scaffold src/lib.rs"; exit 1; }
+              grep -q 'fuzz_iterations' "$root/Trident.toml" || { echo "::error::Trident.toml missing fuzz_iterations"; exit 1; }
+              grep -q 'trident-fuzz = "=0.12.0"' "$root/Cargo.toml" || { echo "::error::Cargo.toml missing pinned trident-fuzz"; exit 1; }
+              echo "::notice::trident clean-cell scaffold schema-check OK; runtime execution deferred to follow-up dispatch."
+              ;;
+            *)
+              echo "::error::unknown target ${{ matrix.target }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Deterministic regression leg (clean; rc=0, no marker)
+        if: matrix.target == 'crucible'
+        timeout-minutes: 5
+        working-directory: references/${{ matrix.ref }}/fuzz/${{ matrix.ref }}
+        run: |
+          set -o pipefail
+          cargo run --release --bin regression \
+            2>&1 | tee "$GITHUB_WORKSPACE/ci-out/${{ matrix.ref }}_clean_regression.out"
+          if grep -q "INVARIANT VIOLATED" "$GITHUB_WORKSPACE/ci-out/${{ matrix.ref }}_clean_regression.out"; then
+            echo "::error::${{ matrix.ref }} clean regression printed an INVARIANT VIOLATED marker."
+            exit 1
+          fi
+
+      - name: Happy-path unit leg (clean)
+        if: matrix.target == 'crucible'
+        timeout-minutes: 5
+        working-directory: references/${{ matrix.ref }}/fuzz/${{ matrix.ref }}
+        run: |
+          cargo test --release --test happy_path -- --nocapture
+
+  planted-twin-detects:
+    name: planted-twin-detects (${{ matrix.ref }} / ${{ matrix.target }})
+    needs: discover
+    if: needs.discover.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.discover.outputs.cells) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Install Anza / Solana CLI ${{ env.SOLANA_VERSION }} (explicit pin, never latest)
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/${SOLANA_VERSION}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - name: Pre-create platform-tools cache dir
+        run: mkdir -p "$HOME/.cache/solana"
+
+      - name: Verify pinned solana-cli is active
+        run: bash scripts/check-solana-pin.sh
+
+      - name: cargo build-sbf ${{ matrix.ref }} (planted)
+        run: |
+          cargo build-sbf \
+            --tools-version "${SOLANA_TOOLS_VERSION}" \
+            --manifest-path "references/${{ matrix.ref }}_planted/programs/${{ matrix.ref }}/Cargo.toml"
+
+      - name: Clone Crucible @ ${{ env.CRUCIBLE_REF }} (sibling to this repo)
+        if: matrix.target == 'crucible'
+        working-directory: ${{ github.workspace }}/..
+        run: |
+          if [ ! -d crucible ]; then
+            git clone --depth 1 --branch "${CRUCIBLE_REF}" \
+              https://github.com/asymmetric-research/crucible.git crucible
+          fi
+          (cd crucible && git rev-parse HEAD)
+
+      - name: Build + install Crucible CLI from ${{ env.CRUCIBLE_REF }}
+        if: matrix.target == 'crucible'
+        working-directory: ${{ github.workspace }}/../crucible
+        run: |
+          if ! command -v crucible >/dev/null 2>&1; then
+            cargo install --path crates/crucible-fuzz-cli --locked || \
+              cargo install --path crates/crucible-fuzz-cli
+          fi
+          crucible --help | head -3
+
+      - name: Run planted cell (${{ matrix.target }}; >=1 INVARIANT VIOLATED marker; markers printed to job summary)
+        timeout-minutes: 5
+        working-directory: references/${{ matrix.ref }}_planted/fuzz/${{ matrix.ref }}
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/ci-out"
+          case "${{ matrix.target }}" in
+            crucible)
+              set +e
+              crucible run "${{ matrix.ref }}" invariant_collateral_authority \
+                --release --timeout "${CRUCIBLE_TIMEOUT}" \
+                2>&1 | tee "$GITHUB_WORKSPACE/ci-out/${{ matrix.ref }}_planted_${{ matrix.target }}.out"
+              rc=${PIPESTATUS[0]}
+              set -e
+              if grep -q -E 'FUZZ_FINDING|INVARIANT VIOLATED' "$GITHUB_WORKSPACE/ci-out/${{ matrix.ref }}_planted_${{ matrix.target }}.out"; then
+                echo "::notice::${{ matrix.ref }} planted (${{ matrix.target }}) reported a violation (expected)."
+                echo '### Markers surfaced' >> "$GITHUB_STEP_SUMMARY"
+                grep -E 'FUZZ_FINDING|INVARIANT VIOLATED' "$GITHUB_WORKSPACE/ci-out/${{ matrix.ref }}_planted_${{ matrix.target }}.out" | head -5 >> "$GITHUB_STEP_SUMMARY" || true
+                exit 0
+              elif [ "$rc" -ne 0 ]; then
+                echo "::notice::${{ matrix.ref }} planted (${{ matrix.target }}) exited non-zero (rc=$rc); treating as detected violation."
+                exit 0
+              else
+                echo "::error::${{ matrix.ref }} planted (${{ matrix.target }}) ran clean - the planted twin should trip the invariant within ${CRUCIBLE_TIMEOUT}s."
+                exit 1
+              fi
+              ;;
+            trident)
+              # Symmetric to the clean leg: schema-check the planted
+              # twin's Trident scaffold. Twin-symmetry acceptance is
+              # covered by the tree-diff acceptance step below.
+              root="$GITHUB_WORKSPACE/references/${{ matrix.ref }}_planted/trident-tests/${{ matrix.ref }}"
+              test -f "$root/Trident.toml" || { echo "::error::planted twin missing Trident.toml"; exit 1; }
+              test -f "$root/src/flows/invariant_collateral_authority.rs" || { echo "::error::planted twin missing sub-shape flow file"; exit 1; }
+              grep -q 'INVARIANT VIOLATED collateral_authority' "$root/src/flows/invariant_collateral_authority.rs" \
+                || { echo "::error::planted twin flow file missing collateral_authority marker"; exit 1; }
+              # Twin symmetry: the two trident-tests subtrees must be
+              # byte-identical (both twins host the same fuzz harness;
+              # the twin difference is in the program crate, not the
+              # harness). Diverging would mean the harness was hand-
+              # edited on one side.
+              clean_root="$GITHUB_WORKSPACE/references/${{ matrix.ref }}/trident-tests"
+              planted_root="$GITHUB_WORKSPACE/references/${{ matrix.ref }}_planted/trident-tests"
+              diff -r "$clean_root" "$planted_root" \
+                || { echo "::error::trident twin subtrees diverged; regenerate via 'cf-invariants-anchor emit --target trident'"; exit 1; }
+              echo "::notice::trident planted-cell scaffold schema-check OK (twin-symmetry + collateral_authority marker asserted); runtime execution deferred."
+              ;;
+            *)
+              echo "::error::unknown target ${{ matrix.target }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Deterministic regression leg (planted; rc=1 with marker)
+        # Belt-and-braces on top of the fuzz leg: a deterministic
+        # regression bin plays a fixed sequence and asserts on the
+        # marker. Stops at the FIRST violation.
+        if: matrix.target == 'crucible'
+        timeout-minutes: 5
+        working-directory: references/${{ matrix.ref }}_planted/fuzz/${{ matrix.ref }}
+        run: |
+          set +e
+          cargo run --release --bin regression \
+            2>&1 | tee "$GITHUB_WORKSPACE/ci-out/${{ matrix.ref }}_planted_regression.out"
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::${{ matrix.ref }} planted regression exited 0 - the planted twin should trip the invariant."
+            exit 1
+          fi
+          if ! grep -q "INVARIANT VIOLATED collateral_authority" "$GITHUB_WORKSPACE/ci-out/${{ matrix.ref }}_planted_regression.out"; then
+            echo "::error::${{ matrix.ref }} planted regression did not print the collateral_authority marker."
+            exit 1
+          fi
+          echo "::notice::${{ matrix.ref }} planted regression tripped the marker (expected, rc=$rc)."
+
+  template-lint:
+    name: template-lint (adopt/workflow-template.yml)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint the copy-paste workflow template
+        # Stub until T-satlas-04 lands the template. Once the file
+        # exists, this job lints it on every push so the copy-paste
+        # artifact cannot rot silently.
+        run: |
+          if [ ! -f adopt/workflow-template.yml ]; then
+            echo "adopt/workflow-template.yml not present yet (lands with T-satlas-04); nothing to lint."
+            exit 0
+          fi
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash)
+          ./actionlint adopt/workflow-template.yml

@@ -1,0 +1,41 @@
+[package]
+name = "collateral_mint_ref_fuzz"
+version = "0.1.0"
+edition = "2021"
+description = "Crucible fuzz harness + deterministic regression binary + happy-path integration test for collateral_mint_ref (solana-invariant-atlas, hand-authored on the render_crucible_balance pattern)."
+license = "Apache-2.0"
+
+[workspace]
+
+[dependencies]
+# Pinned to upstream Crucible v0.2.0
+# (https://github.com/asymmetric-research/crucible/tree/v0.2.0).
+# Same path convention as cf-invariants-anchor's references: the
+# Crucible workspace lives at `<repo-root>/../crucible`, resolved via
+# `../../../../../crucible/...` from this Cargo.toml. CI clones it into
+# that layout; see .github/workflows/ci.yml.
+crucible-fuzzer       = { path = "../../../../../crucible/crates/crucible-fuzzer" }
+crucible-test-context = { path = "../../../../../crucible/crates/crucible-test-context" }
+
+anchor-lang    = "=1.0.1"
+anchor-spl     = "=1.0.1"
+arbitrary      = { version = "1", features = ["derive"] }
+ctrlc          = "3.4"
+libafl         = { version = "0.15.1", features = ["std", "cli", "prelude"] }
+libafl_bolts   = { version = "0.15.1", features = ["std"] }
+collateral_mint_ref = { path = "../../programs/collateral_mint_ref", features = ["no-entrypoint"] }
+solana-keypair = "3.0"
+solana-pubkey  = "3.0"
+solana-signer  = "3.0"
+spl-token      = "9.0"
+
+[[bin]]
+name = "invariant_test"
+path = "src/main.rs"
+
+[[bin]]
+name = "regression"
+path = "src/bin/regression.rs"
+
+[features]
+invariant_collateral_authority = []

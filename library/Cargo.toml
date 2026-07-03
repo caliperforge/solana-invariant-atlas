@@ -1,0 +1,24 @@
+[package]
+name = "atlas-driver"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.79"
+license = "Apache-2.0"
+repository = "https://github.com/caliperforge/solana-invariant-atlas"
+description = "Thin driver over the pinned cf-invariants-anchor crates: suggest invariants for a parsed Anchor surface, render fixtures per emit target, render scorecards."
+
+# Pinned git dependencies on the canonical library home (build spec
+# section 2 rule 3). Single rev everywhere; re-pinned to the merge tag
+# when the T-satlas-03 upstream branch lands. The cli crate is bin-only
+# upstream and is consumed as a pinned `cargo install --git` binary at
+# the same rev (see docs/design_notes.md).
+[dependencies]
+cf-invariants-anchor-core = { git = "https://github.com/caliperforge/cf-invariants-anchor", rev = "1b3905e9f756d87dba488e1e47b4d704bfbaa3f5" }
+cf-invariants-anchor-suggest = { git = "https://github.com/caliperforge/cf-invariants-anchor", rev = "1b3905e9f756d87dba488e1e47b4d704bfbaa3f5" }
+cf-invariants-anchor-emit = { git = "https://github.com/caliperforge/cf-invariants-anchor", rev = "1b3905e9f756d87dba488e1e47b4d704bfbaa3f5" }
+cf-invariants-anchor-report = { git = "https://github.com/caliperforge/cf-invariants-anchor", rev = "1b3905e9f756d87dba488e1e47b4d704bfbaa3f5" }
+serde_json = "1"
+
+[[bin]]
+name = "atlas-driver"
+path = "src/main.rs"

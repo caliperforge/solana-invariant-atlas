@@ -1,0 +1,7 @@
+# Pinned so CI cannot float (build spec section 3, spike Q4 drift note 2).
+# Host-verified stable at pin time. cargo-build-sbf uses the platform-tools
+# toolchain (v1.52) independently of this pin; this file governs the
+# host-side library build and CI's cargo check/test steps.
+[toolchain]
+channel = "1.96.0"
+components = ["clippy", "rustfmt"]

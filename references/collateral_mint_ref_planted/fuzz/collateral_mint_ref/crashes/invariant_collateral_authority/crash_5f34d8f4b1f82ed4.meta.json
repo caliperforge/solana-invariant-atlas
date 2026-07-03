@@ -1,0 +1,29 @@
+{
+  "test_name": "invariant_collateral_authority",
+  "timestamp": "2026-07-02T18:30:03Z",
+  "iteration": 26,
+  "seed": 1783017001394897000,
+  "actions": [
+    {
+      "name": "deposit_wrong_mint",
+      "params": {
+        "amount": 28287
+      },
+      "success": true
+    },
+    {
+      "name": "deposit_authorized",
+      "params": {
+        "amount": 2
+      },
+      "success": true
+    },
+    {
+      "name": "mint_receipts",
+      "params": {
+        "amount": 256
+      },
+      "success": true
+    }
+  ]
+}

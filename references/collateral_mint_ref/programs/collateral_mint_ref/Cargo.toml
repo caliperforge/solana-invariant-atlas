@@ -1,0 +1,26 @@
+[package]
+name = "collateral_mint_ref"
+version = "0.1.0"
+edition = "2021"
+description = "solana-invariant-atlas reference: synthetic collateralized-mint bank with clean/planted twin for the missing-collateral-mint-constraint sub-shape of the access_control class."
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "collateral_mint_ref"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+test-sbf = []
+
+[dependencies]
+# Pinned per solana-invariant-atlas build spec section 3 (docs/toolchain.md).
+# anchor-spl = "=1.0.1" is the one net-new dependency for the collateral_mint_ref
+# case relative to the other CaliperForge Solana references.
+anchor-lang = "=1.0.1"
+anchor-spl  = "=1.0.1"

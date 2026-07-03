@@ -1,0 +1,117 @@
+solana-invariant-atlas
+Copyright 2026 CaliperForge
+
+This product includes software developed by CaliperForge
+(https://caliperforge.com).
+
+------------------------------------------------------------------------
+Vendoring statement (top-of-file, load-bearing)
+------------------------------------------------------------------------
+
+No upstream program code is vendored into this repository. All Anchor
+reference programs under `references/` are original CaliperForge code,
+licensed under the Apache License, Version 2.0 (see LICENSE). The
+attributions below cover tools, libraries, and citation-only corpora
+this repository builds on, consumes as pinned dependencies, targets
+as emit formats, or cites as coverage-map comparators. Zero upstream
+program code (from Trident, Crucible, Anchor, mollusk, LiteSVM,
+awesome-trident-tests, or any cited port repository) is copied into
+this repository or its build artifacts.
+
+STATUS: this NOTICE is routed to compliance_lead as gate G1 of the
+Phase 1 build spec. The gate object includes: this NOTICE text, the
+README license section, the Crucible license-state divergence
+resolution below (verify on the pinned v0.2.0 LICENSE file), the
+git-dep pattern confirmation for the `cf-invariants-anchor-*` crates,
+and confirmation nothing else is vendored from any upstream program.
+Any attribution wording below that compliance_lead's primary-source
+verification revises is updated at the reviewed commit; the sequencing
+is documented in `docs/design_notes.md` (fallback documentation).
+
+------------------------------------------------------------------------
+Third-party attributions
+------------------------------------------------------------------------
+
+1. Crucible (asymmetric-research/crucible), MIT License, pinned at
+   v0.2.0 (tag commit sha 35ec899ae5a4148788f7face863b0ca24d92781d).
+   Emit target and fuzz engine rail. The atlas's Crucible-target
+   fixtures under `references/*/fuzz/` are Rust source files that
+   depend on `crucible-fuzzer`, `crucible-test-context`, and related
+   Crucible v0.2.0 crates as build-time PATH dependencies (CI clones
+   the Crucible workspace into a sibling layout; see `.github/
+   workflows/ci.yml`). No Crucible source code is copied into this
+   repository or its build artifacts.
+
+   License verified from primary source at gate G1 (2026-07-03) on
+   the pinned v0.2.0 tree: the `LICENSE` file at tag v0.2.0 is the
+   standard MIT template with copyright "Copyright (c) 2026
+   Asymmetric Research". The GitHub repository-level license field
+   reads NOASSERTION for the auto-detector, but the pinned tree's
+   `LICENSE` file is unambiguously MIT; see `docs/design_notes.md`
+   ("Crucible license state at v0.2.0") for the design-notes
+   cross-reference that records the divergence between the
+   auto-detector and the pinned-tree LICENSE file.
+
+2. Trident (Ackee-Blockchain/trident), MIT license, pinned at v0.12.0.
+   Emit format target only: the atlas's class-shaped emit layer renders
+   fuzz-test sources in Trident's v0.12.0 project shape
+   (`Trident.toml` + `trident-tests/<program>/` scaffold + one
+   `src/flows/<invariant>.rs` per candidate). No Trident source code
+   is vendored or modified; Trident is not a runtime dependency of
+   this repository's own crates. The `flow_wrong_signer_*` naming
+   convention used in the atlas's `access_control` emit surface is
+   Trident's own convention, referenced verbatim so the emitted
+   fixture parses under Trident's tooling.
+
+3. Anchor (solana-foundation/anchor), Apache License, Version 2.0.
+   The reference programs under `references/` use `anchor-lang` and
+   `anchor-spl` (pinned `= 1.0.1`) as ordinary Cargo dependencies.
+   `solana-program-test` is reached transitively through Anchor as
+   part of the Solana Labs stack (Apache-2.0); no `solana-program-test`
+   source code is vendored.
+
+4. mollusk (anza-xyz/mollusk), Apache License, Version 2.0. Named as
+   a coverage-map comparator; no mollusk code is vendored into this
+   repository. compliance_lead re-checks the pinned v0.13.4 tree's
+   LICENSE file at G1 to confirm the Apache-2.0 mark (the eval's
+   section 4 recorded Apache-2.0 at the fetched-2026-07-02 header;
+   the license file is the authoritative source).
+
+5. LiteSVM (LiteSVM/litesvm), Apache License, Version 2.0. The SVM
+   execution environment Crucible v0.2.0 drives. Reached only
+   transitively through Crucible; no LiteSVM code is copied here.
+
+------------------------------------------------------------------------
+Citation-only references (no code vendored)
+------------------------------------------------------------------------
+
+6. awesome-trident-tests (Ackee-Blockchain/awesome-trident-tests),
+   no LICENSE file at fetched-2026-07-02 main tree (GitHub license
+   field reads null; README carries no license marker). Cited as a
+   coverage-map comparator (the audit-shop public suites column). No
+   corpus code is vendored into this repository; the citation pin in
+   `docs/coverage_map.md` records the fetched-on date
+   (`main @ 2026-07-02`) rather than a commit sha because the corpus
+   is a rolling index. Because no code is copied here, the atlas
+   carries no license obligation from this corpus; the citation
+   remains for coverage-map honesty only.
+
+------------------------------------------------------------------------
+CaliperForge dependencies
+------------------------------------------------------------------------
+
+The `library/` crate consumes the `cf-invariants-anchor-*` crates
+(https://github.com/caliperforge/cf-invariants-anchor) as pinned git
+dependencies at commit sha `1b3905e9f756d87dba488e1e47b4d704bfbaa3f5`
+(workspace version 0.1.1). Those crates are CaliperForge's own work,
+licensed under the Apache License, Version 2.0. The
+`cf-invariants-anchor-cli` binary is consumed at the same pinned rev
+via `cargo install --git ... --rev ...` (the upstream package is
+bin-only and cannot be a library dependency); see
+`docs/design_notes.md` for the deviation note.
+
+The four cited real-target port repositories (`cf-invariants-jito`,
+`cf-invariants-jito-priorityfee`, `cf-invariants-jito-tippayment`,
+`cf-invariants-pyth`) are cited by URL in `cases/*/CITATION.md`. No
+port code is vendored into this atlas; the ports remain canonical at
+their own commit histories and CI badges.

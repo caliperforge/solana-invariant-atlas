@@ -1,0 +1,274 @@
+# Drop-in pre-deploy screen for an Anchor program.
+#
+# What this is: a GitHub Actions workflow you copy verbatim into YOUR
+# Anchor program repo at .github/workflows/pre-deploy-screen.yml. On
+# every push and pull request it checks out the
+# caliperforge/solana-invariant-atlas repo at a pinned ref, builds your
+# program with the pinned Solana rails (solana-cli 2.1.21,
+# platform-tools v1.52), and runs your Crucible invariant fixture
+# against your program under LiteSVM. A clean-leg green run says the
+# encoded properties hold on your program at the pinned atlas rev.
+#
+# What this is not: an audit, a runtime guard, or a discovery engine
+# for unknown bug classes. It is a defender-side pre-deploy screen for
+# the properties your fixture encodes; it does not clear your program
+# of a class no property encodes. See adopt/README.md in the atlas
+# repo for the full walkthrough, including the one-time local steps
+# that create the fuzz fixture this workflow runs.
+#
+# Rails this composes with, not replaces: Crucible is the fuzz engine
+# this leg runs on; Trident ships its own stateful fuzzing for Anchor
+# programs; Anchor native tests, mollusk, and LiteSVM cover their own
+# layers. Crucible leg today; the Trident leg lands with T-satlas-03.
+#
+# Two legs, mirroring the atlas's own CI:
+#   your-program-clean-passes     your fixture passes on your program,
+#     zero `INVARIANT VIOLATED` markers, rc=0. Prints
+#     `clean-passes: OK` on success.
+#   your-planted-mutation-fails   OPTIONAL red leg: any planted twin
+#     you keep under planted/ (a copy of your own program with ONE
+#     seeded specification violation, per the framing standard cited
+#     in adopt/README.md) must trip a marker. Inverted assertion:
+#     green exactly when the seeded violation is caught. With no
+#     planted twin present the leg passes vacuously, so this workflow
+#     is useful before you write one.
+name: pre-deploy-screen
+
+on:
+  push:
+  pull_request:
+
+env:
+  # ---- Adopter-editable knobs (four env vars, nothing else) ----
+
+  # Your Anchor program crate name. The workflow expects the Anchor
+  # workspace convention: the program manifest lives at
+  # programs/<ADOPTER_PROGRAM_CRATE>/Cargo.toml and your fuzz fixture
+  # crate (created once, walkthrough step 5) lives at
+  # fuzz/<ADOPTER_PROGRAM_CRATE>/.
+  ADOPTER_PROGRAM_CRATE: my_anchor_program
+
+  # Path to your program's Anchor IDL JSON, relative to the root of
+  # THIS repo (your program repo). `anchor build` writes it to
+  # target/idl/<crate>.json by default.
+  ADOPTER_IDL_PATH: target/idl/my_anchor_program.json
+
+  # Pin the atlas at a specific ref so a downstream atlas change never
+  # silently changes what this workflow does. A tag or a full commit
+  # SHA both work. Update deliberately.
+  SOLANA_ATLAS_REPO: caliperforge/solana-invariant-atlas
+  SOLANA_ATLAS_REF: main  # TODO: pin to flip-tag SHA
+
+jobs:
+  your-program-clean-passes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout your program repo
+        uses: actions/checkout@v4
+        with:
+          path: your-program
+
+      - name: Checkout the solana-invariant-atlas (pinned)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOLANA_ATLAS_REPO }}
+          ref: ${{ env.SOLANA_ATLAS_REF }}
+          path: atlas
+
+      - name: Install Rust from the atlas rust-toolchain.toml
+        working-directory: atlas
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Install Anza / Solana CLI 2.1.21 (explicit pin, never latest)
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v2.1.21/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Pre-create platform-tools cache dir
+        # Agave v2.1.21's cargo-build-sbf panics (NotFound) on a fresh
+        # runner where ~/.cache/solana has never been created.
+        run: mkdir -p "$HOME/.cache/solana"
+
+      - name: Verify pinned solana-cli is active
+        working-directory: atlas
+        run: bash scripts/check-solana-pin.sh
+
+      - name: Check the knob paths exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="your-program/programs/${ADOPTER_PROGRAM_CRATE}/Cargo.toml"
+          idl="your-program/${ADOPTER_IDL_PATH}"
+          fuzz_dir="your-program/fuzz/${ADOPTER_PROGRAM_CRATE}"
+          if [ ! -f "$manifest" ]; then
+            echo "program manifest not found: $manifest (set ADOPTER_PROGRAM_CRATE)" >&2
+            exit 1
+          fi
+          if [ ! -f "$idl" ]; then
+            echo "IDL not found: $idl (set ADOPTER_IDL_PATH; anchor build writes target/idl/<crate>.json)" >&2
+            exit 1
+          fi
+          if [ ! -d "$fuzz_dir" ]; then
+            echo "fuzz fixture crate not found: $fuzz_dir (walkthrough step 5 creates it)" >&2
+            exit 1
+          fi
+
+      - name: cargo build-sbf your program (pinned platform-tools)
+        run: |
+          cargo build-sbf \
+            --tools-version v1.52 \
+            --manifest-path "your-program/programs/${ADOPTER_PROGRAM_CRATE}/Cargo.toml"
+
+      - name: Install the pinned cf-invariants-anchor CLI
+        run: |
+          command -v cf-invariants-anchor >/dev/null 2>&1 || \
+            cargo install --git https://github.com/caliperforge/cf-invariants-anchor \
+              --rev 1b3905e9f756d87dba488e1e47b4d704bfbaa3f5 cf-invariants-anchor-cli
+          cf-invariants-anchor version
+
+      - name: Suggest step receipt (heuristic; ranked candidates printed to the log)
+        # Heuristic suggester only in CI. The AI suggester stays behind
+        # the --ai flag; its provenance is disclosed via
+        # InvariantSource::AiSuggested at emit time (see
+        # AI_DISCLOSURE.md in the atlas repo). CI never passes --ai.
+        run: |
+          cf-invariants-anchor suggest "your-program/${ADOPTER_IDL_PATH}"
+
+      - name: Clone Crucible @ v0.2.0 (sibling layout for the fixture path deps)
+        working-directory: ${{ github.workspace }}
+        run: |
+          if [ ! -d crucible ]; then
+            git clone --depth 1 --branch v0.2.0 \
+              https://github.com/asymmetric-research/crucible.git crucible
+          fi
+          (cd crucible && git rev-parse HEAD)
+
+      - name: Build + install the Crucible CLI from v0.2.0
+        working-directory: ${{ github.workspace }}/crucible
+        run: |
+          if ! command -v crucible >/dev/null 2>&1; then
+            cargo install --path crates/crucible-fuzz-cli --locked || \
+              cargo install --path crates/crucible-fuzz-cli
+          fi
+          crucible --help | head -3
+
+      - name: Clean leg (your program survives the fuzz walk, zero markers)
+        shell: bash
+        working-directory: your-program/fuzz/${{ env.ADOPTER_PROGRAM_CRATE }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/ci-out"
+          # Every `fn invariant_*` declared in the fixture runs on a
+          # fixed 30-second Crucible budget (the atlas house number;
+          # see docs/design_notes.md in the atlas repo).
+          invariants="$(grep -oE 'fn invariant_[a-z0-9_]+' src/main.rs | sed 's/^fn //' | sort -u)"
+          if [ -z "$invariants" ]; then
+            echo "no fn invariant_* found in src/main.rs" >&2
+            exit 1
+          fi
+          for inv in $invariants; do
+            out="$GITHUB_WORKSPACE/ci-out/clean_${inv}.out"
+            crucible run "${ADOPTER_PROGRAM_CRATE}" "$inv" \
+              --release --timeout 30 2>&1 | tee "$out"
+            if grep -q -E 'FUZZ_FINDING|INVARIANT VIOLATED' "$out"; then
+              echo "::error::clean leg tripped $inv - the clean program should not trip the invariant." >&2
+              exit 1
+            fi
+          done
+          echo "clean-passes: OK"
+
+  your-planted-mutation-fails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout your program repo
+        uses: actions/checkout@v4
+        with:
+          path: your-program
+
+      - name: Checkout the solana-invariant-atlas (pinned)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOLANA_ATLAS_REPO }}
+          ref: ${{ env.SOLANA_ATLAS_REF }}
+          path: atlas
+
+      - name: Install Rust from the atlas rust-toolchain.toml
+        working-directory: atlas
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Install Anza / Solana CLI 2.1.21 (explicit pin, never latest)
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v2.1.21/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Pre-create platform-tools cache dir
+        run: mkdir -p "$HOME/.cache/solana"
+
+      - name: Verify pinned solana-cli is active
+        working-directory: atlas
+        run: bash scripts/check-solana-pin.sh
+
+      - name: Clone Crucible @ v0.2.0 (sibling layout for the fixture path deps)
+        working-directory: ${{ github.workspace }}
+        run: |
+          if [ ! -d crucible ]; then
+            git clone --depth 1 --branch v0.2.0 \
+              https://github.com/asymmetric-research/crucible.git crucible
+          fi
+          (cd crucible && git rev-parse HEAD)
+
+      - name: Build + install the Crucible CLI from v0.2.0
+        working-directory: ${{ github.workspace }}/crucible
+        run: |
+          if ! command -v crucible >/dev/null 2>&1; then
+            cargo install --path crates/crucible-fuzz-cli --locked || \
+              cargo install --path crates/crucible-fuzz-cli
+          fi
+          crucible --help | head -3
+
+      - name: Planted twins trip their markers (inverted assertion; vacuous when absent)
+        shell: bash
+        working-directory: your-program
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/ci-out"
+          # Optional red leg. Keep a planted twin of your own program
+          # (same crate name, ONE seeded specification violation, per
+          # the framing standard cited in adopt/README.md) at:
+          #   planted/<twin-name>/programs/<crate>/   the twin program
+          #   planted/<twin-name>/fuzz/<crate>/       its fuzz crate
+          # The atlas's references/collateral_mint_ref_planted/ tree is
+          # the worked example of this layout. nullglob so a zero-match
+          # glob expands to nothing instead of the literal pattern.
+          shopt -s nullglob
+          twins=(planted/*/fuzz/*/)
+          shopt -u nullglob
+          if [ "${#twins[@]}" -eq 0 ]; then
+            echo "planted-detects: vacuous (no planted twin under planted/)"
+            exit 0
+          fi
+          for fuzz_dir in "${twins[@]}"; do
+            twin_root="${fuzz_dir%%/fuzz/*}"
+            prog_manifest="$(find "$twin_root/programs" -maxdepth 2 -name Cargo.toml | head -1)"
+            cargo build-sbf --tools-version v1.52 --manifest-path "$prog_manifest"
+            invariants="$(grep -oE 'fn invariant_[a-z0-9_]+' "$fuzz_dir/src/main.rs" | sed 's/^fn //' | sort -u)"
+            caught=0
+            for inv in $invariants; do
+              out="$GITHUB_WORKSPACE/ci-out/planted_${inv}.out"
+              set +e
+              (cd "$fuzz_dir" && crucible run "${ADOPTER_PROGRAM_CRATE}" "$inv" \
+                --release --timeout 30) 2>&1 | tee "$out"
+              set -e
+              if grep -q -E 'FUZZ_FINDING|INVARIANT VIOLATED' "$out"; then
+                caught=1
+                grep -m3 -E 'FUZZ_FINDING|INVARIANT VIOLATED' "$out" >> "$GITHUB_STEP_SUMMARY" || true
+              fi
+            done
+            if [ "$caught" -ne 1 ]; then
+              echo "::error::planted twin $twin_root ran clean - the seeded specification violation should trip a marker." >&2
+              exit 1
+            fi
+          done
+          echo "planted-detects: OK (${#twins[@]} twin(s), markers in the job summary)"

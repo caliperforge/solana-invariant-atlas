@@ -1,0 +1,92 @@
+{
+  "address": "Co1LMintRef11111111111111111111111111111111",
+  "metadata": {
+    "name": "collateral_mint_ref",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Synthetic Anchor collateralized-mint bank (solana-invariant-atlas reference; worked-example IDL, hand-transcribed from references/collateral_mint_ref/programs/collateral_mint_ref/src/lib.rs)."
+  },
+  "instructions": [
+    {
+      "name": "initialize_bank",
+      "discriminator": [217, 55, 77, 45, 245, 197, 75, 140],
+      "accounts": [
+        { "name": "bank", "writable": true, "pda": { "seeds": [
+          { "kind": "const", "value": [98, 97, 110, 107] }
+        ] } },
+        { "name": "bank_authority", "pda": { "seeds": [
+          { "kind": "const", "value": [98, 97, 110, 107, 95, 97, 117, 116, 104, 111, 114, 105, 116, 121] }
+        ] } },
+        { "name": "payer", "writable": true, "signer": true },
+        { "name": "system_program", "address": "11111111111111111111111111111111" }
+      ],
+      "args": [
+        { "name": "collateral_mint", "type": "pubkey" },
+        { "name": "receipt_mint", "type": "pubkey" }
+      ]
+    },
+    {
+      "name": "deposit",
+      "discriminator": [242, 35, 198, 137, 82, 225, 242, 182],
+      "accounts": [
+        { "name": "bank", "writable": true, "pda": { "seeds": [
+          { "kind": "const", "value": [98, 97, 110, 107] }
+        ] } },
+        { "name": "collateral_account", "writable": true },
+        { "name": "bank_vault", "writable": true },
+        { "name": "user", "signer": true },
+        { "name": "token_program", "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }
+      ],
+      "args": [
+        { "name": "amount", "type": "u64" }
+      ]
+    },
+    {
+      "name": "mint_receipts",
+      "discriminator": [199, 194, 85, 111, 146, 153, 106, 119],
+      "accounts": [
+        { "name": "bank", "writable": true, "pda": { "seeds": [
+          { "kind": "const", "value": [98, 97, 110, 107] }
+        ] } },
+        { "name": "receipt_mint", "writable": true },
+        { "name": "receipt_account", "writable": true },
+        { "name": "bank_authority", "pda": { "seeds": [
+          { "kind": "const", "value": [98, 97, 110, 107, 95, 97, 117, 116, 104, 111, 114, 105, 116, 121] }
+        ] } },
+        { "name": "user", "signer": true },
+        { "name": "token_program", "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }
+      ],
+      "args": [
+        { "name": "amount", "type": "u64" }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Bank",
+      "discriminator": [142, 49, 166, 242, 50, 66, 97, 188]
+    }
+  ],
+  "errors": [
+    { "code": 6000, "name": "InvalidAmount", "msg": "Invalid amount (must be non-zero)" },
+    { "code": 6001, "name": "WrongCollateralMint", "msg": "collateral_account.mint does not match bank.collateral_mint" },
+    { "code": 6002, "name": "InsufficientPending", "msg": "Requested receipt amount exceeds pending deposit balance" },
+    { "code": 6003, "name": "Overflow", "msg": "Overflow" },
+    { "code": 6004, "name": "Underflow", "msg": "Underflow" }
+  ],
+  "types": [
+    {
+      "name": "Bank",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "collateral_mint", "type": "pubkey" },
+          { "name": "receipt_mint", "type": "pubkey" },
+          { "name": "bank_authority_bump", "type": "u8" },
+          { "name": "pending_receipts", "type": "u64" },
+          { "name": "total_receipts_minted", "type": "u64" }
+        ]
+      }
+    }
+  ]
+}
