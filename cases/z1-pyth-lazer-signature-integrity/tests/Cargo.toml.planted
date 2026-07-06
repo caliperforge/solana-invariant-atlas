@@ -1,0 +1,36 @@
+# Overlay applied by `scripts/select-twin.sh planted` to point the
+# `pyth-lazer-solana-contract` path dep at the planted-twin program crate
+# AND enable the `twin_planted_wire` feature so the four-field
+# `VerifyMessage` struct literal in `src/lib.rs` compiles against the
+# planted twin's anchor-generated IDL. Byte-identical to Cargo.toml
+# except for the path dep and the default feature.
+[package]
+name = "z1-pyth-lazer-signature-integrity-tests"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[features]
+default = ["twin_planted_wire"]
+twin_planted_wire = []
+
+[dependencies]
+pyth-lazer-solana-contract = { path = "../planted/pyth-lazer-solana-contract" }
+
+anchor-lang = "0.30.1"
+byteorder = "1.5.0"
+# solana-sdk + solana-program-test live in [dependencies] (not
+# [dev-dependencies]) because tests/src/lib.rs imports them at module
+# scope (lines 18-19 and 266). Dev-deps are not visible to the lib
+# target when it is compiled as a dep of the tests/*.rs integration
+# binaries, so leaving them under [dev-dependencies] fails to build.
+solana-program-test = "1.18.26"
+solana-sdk = "1.18.26"
+
+[dev-dependencies]
+ed25519-dalek = { version = "1.0.1", features = ["std"] }
+hex = "0.4.3"
+rand = "0.7.3"
+sha2 = "0.9.9"
+tokio = { version = "1.40.0", features = ["full"] }

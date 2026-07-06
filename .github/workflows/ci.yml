@@ -353,6 +353,206 @@ jobs:
           fi
           echo "::notice::${{ matrix.ref }} planted regression tripped the marker (expected, rc=$rc)."
 
+  z1-clean-passes:
+    # cases/z1-pyth-lazer-signature-integrity uses a different shape from
+    # the references/*_ref/ auto-discovery pattern above: the twins live
+    # under `clean/` and `planted/` inside a single case dir, and both
+    # build the actual vendored `pyth-lazer-solana-contract` crate at pin
+    # eb7f460 (Apache-2.0). The two named leg jobs below extend the
+    # atlas's existing two-named-job discipline over this case shape.
+    name: clean-passes (z1-pyth-lazer-signature-integrity)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Install Anza / Solana CLI ${{ env.SOLANA_VERSION }} (explicit pin, never latest)
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/${SOLANA_VERSION}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - name: Pre-create platform-tools cache dir
+        run: mkdir -p "$HOME/.cache/solana"
+
+      - name: Verify pinned solana-cli is active
+        run: bash scripts/check-solana-pin.sh
+
+      - name: cargo build-sbf z1 clean twin
+        run: |
+          cargo build-sbf \
+            --tools-version "${SOLANA_TOOLS_VERSION}" \
+            --manifest-path cases/z1-pyth-lazer-signature-integrity/clean/pyth-lazer-solana-contract/Cargo.toml
+
+      - name: Select clean twin for the tests crate
+        run: bash cases/z1-pyth-lazer-signature-integrity/scripts/select-twin.sh clean
+
+      - name: Run clean legs (property + regression; zero markers, rc=0)
+        timeout-minutes: 10
+        env:
+          CASE_TWIN: clean
+        run: |
+          set -o pipefail
+          mkdir -p "$GITHUB_WORKSPACE/ci-out"
+
+          cargo test \
+            --manifest-path cases/z1-pyth-lazer-signature-integrity/tests/Cargo.toml \
+            --release --test z1_invariant_signer_matches -- --nocapture \
+            2>&1 | tee "$GITHUB_WORKSPACE/ci-out/z1_clean_property.out"
+          if grep -q "INVARIANT VIOLATED z1_" "$GITHUB_WORKSPACE/ci-out/z1_clean_property.out"; then
+            echo "::error::z1 clean property leg printed an INVARIANT VIOLATED z1_ marker."
+            exit 1
+          fi
+
+          cargo test \
+            --manifest-path cases/z1-pyth-lazer-signature-integrity/tests/Cargo.toml \
+            --release --test z1_signature_bypass -- --nocapture \
+            2>&1 | tee "$GITHUB_WORKSPACE/ci-out/z1_clean_regression.out"
+          if grep -q "INVARIANT VIOLATED z1_" "$GITHUB_WORKSPACE/ci-out/z1_clean_regression.out"; then
+            echo "::error::z1 clean regression leg printed an INVARIANT VIOLATED z1_ marker."
+            exit 1
+          fi
+
+      - name: Trident scaffold schema-check (clean twin)
+        run: |
+          root="cases/z1-pyth-lazer-signature-integrity/trident-tests/z1-signature-integrity"
+          test -f "$root/Trident.toml"                                  || { echo "::error::missing Trident.toml"; exit 1; }
+          test -f "$root/Cargo.toml"                                    || { echo "::error::missing scaffold Cargo.toml"; exit 1; }
+          test -f "$root/src/lib.rs"                                    || { echo "::error::missing scaffold src/lib.rs"; exit 1; }
+          test -f "$root/src/flows/invariant_signer_matches_ed25519.rs" || { echo "::error::missing z1 sub-shape flow file"; exit 1; }
+          grep -q 'fuzz_iterations' "$root/Trident.toml"                || { echo "::error::Trident.toml missing fuzz_iterations"; exit 1; }
+          grep -q 'trident-fuzz = "=0.12.0"' "$root/Cargo.toml"         || { echo "::error::Cargo.toml missing pinned trident-fuzz"; exit 1; }
+          echo "::notice::z1 trident scaffold schema-check OK; runtime execution deferred to follow-up dispatch."
+
+  z1-planted-twin-detects:
+    name: planted-twin-detects (z1-pyth-lazer-signature-integrity)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Install Anza / Solana CLI ${{ env.SOLANA_VERSION }} (explicit pin, never latest)
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/${SOLANA_VERSION}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - name: Pre-create platform-tools cache dir
+        run: mkdir -p "$HOME/.cache/solana"
+
+      - name: Verify pinned solana-cli is active
+        run: bash scripts/check-solana-pin.sh
+
+      - name: cargo build-sbf z1 planted twin
+        run: |
+          cargo build-sbf \
+            --tools-version "${SOLANA_TOOLS_VERSION}" \
+            --manifest-path cases/z1-pyth-lazer-signature-integrity/planted/pyth-lazer-solana-contract/Cargo.toml
+
+      - name: Select planted twin for the tests crate
+        run: bash cases/z1-pyth-lazer-signature-integrity/scripts/select-twin.sh planted
+
+      - name: Run planted legs; >=1 z1 marker; markers to job summary
+        timeout-minutes: 10
+        env:
+          CASE_TWIN: planted
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/ci-out"
+          MARKER='INVARIANT VIOLATED z1_verify_message_signer_matches_ed25519_program_check'
+
+          # Property leg; expected to fire the marker and exit non-zero
+          # (test-body panics after first violation).
+          set +e
+          cargo test \
+            --manifest-path cases/z1-pyth-lazer-signature-integrity/tests/Cargo.toml \
+            --release --test z1_invariant_signer_matches -- --nocapture \
+            2>&1 | tee "$GITHUB_WORKSPACE/ci-out/z1_planted_property.out"
+          rc_property=${PIPESTATUS[0]}
+          set -e
+
+          # Regression leg; identical shape.
+          set +e
+          cargo test \
+            --manifest-path cases/z1-pyth-lazer-signature-integrity/tests/Cargo.toml \
+            --release --test z1_signature_bypass -- --nocapture \
+            2>&1 | tee "$GITHUB_WORKSPACE/ci-out/z1_planted_regression.out"
+          rc_regression=${PIPESTATUS[0]}
+          set -e
+
+          # Inverted-assertion: the job PASSES iff the marker fired AND
+          # the test exited non-zero on BOTH legs. Anything else is a
+          # class-fidelity gate failure.
+          echo '### z1 markers surfaced' >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo '#### property leg';
+            grep "$MARKER" "$GITHUB_WORKSPACE/ci-out/z1_planted_property.out" | head -5 || true;
+            echo '#### regression leg';
+            grep "$MARKER" "$GITHUB_WORKSPACE/ci-out/z1_planted_regression.out" | head -5 || true;
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if ! grep -q "$MARKER" "$GITHUB_WORKSPACE/ci-out/z1_planted_regression.out"; then
+            echo "::error::z1 planted regression did not print the marker."
+            exit 1
+          fi
+          if [ "$rc_regression" -eq 0 ]; then
+            echo "::error::z1 planted regression exited 0 - the planted twin should trip the invariant."
+            exit 1
+          fi
+          if ! grep -q "$MARKER" "$GITHUB_WORKSPACE/ci-out/z1_planted_property.out"; then
+            echo "::error::z1 planted property leg did not print the marker."
+            exit 1
+          fi
+          if [ "$rc_property" -eq 0 ]; then
+            echo "::error::z1 planted property leg exited 0 - the planted twin should trip the invariant."
+            exit 1
+          fi
+          echo "::notice::z1 planted twin tripped the marker on both legs (expected)."
+
+      - name: Trident scaffold schema-check (planted twin) + twin-symmetry
+        run: |
+          root="cases/z1-pyth-lazer-signature-integrity/trident-tests/z1-signature-integrity"
+          test -f "$root/Trident.toml"                                  || { echo "::error::planted scaffold missing Trident.toml"; exit 1; }
+          test -f "$root/src/flows/invariant_signer_matches_ed25519.rs" || { echo "::error::planted scaffold missing z1 sub-shape flow file"; exit 1; }
+          grep -q 'INVARIANT VIOLATED z1_verify_message_signer_matches_ed25519_program_check' \
+            "$root/src/flows/invariant_signer_matches_ed25519.rs" \
+            || { echo "::error::planted scaffold flow file missing z1 marker string"; exit 1; }
+          # Twin symmetry: the trident-tests scaffold is one copy under
+          # the case dir (shared by both twins via the tests/ path
+          # switch). No cross-twin diff to run for z1.
+          echo "::notice::z1 trident planted-cell scaffold schema-check OK; runtime execution deferred."
+
+  framing-discipline:
+    name: framing-discipline (grep bans + em-dash bans)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Word-ban grep across case and scorecard surfaces
+        run: |
+          # Grep-check per the atlas planted-twin framing discipline.
+          # Banned words: attack, exploit, tampering, victim, monetize,
+          # drain, sandwich-to-extract. Case surfaces + scorecards.
+          set -e
+          BANNED='\b(attack|exploit|tampering|victim|monetize|drain|sandwich-to-extract)\b'
+          if grep -rEwn "$BANNED" \
+            cases/z1-pyth-lazer-signature-integrity/ \
+            docs/scorecards/z1-pyth-lazer-signature-integrity/; then
+            echo "::error::z1 case surface contains a banned framing word."
+            exit 1
+          fi
+          # Em-dash ban on public surfaces (atlas house rule).
+          if grep -rn "—" \
+            cases/z1-pyth-lazer-signature-integrity/ \
+            docs/scorecards/z1-pyth-lazer-signature-integrity/; then
+            echo "::error::z1 case surface contains an em-dash."
+            exit 1
+          fi
+          echo "::notice::z1 framing-discipline grep clean."
+
   template-lint:
     name: template-lint (adopt/workflow-template.yml)
     runs-on: ubuntu-latest

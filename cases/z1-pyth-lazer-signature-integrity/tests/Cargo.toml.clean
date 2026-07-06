@@ -1,0 +1,40 @@
+[package]
+name = "z1-pyth-lazer-signature-integrity-tests"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+# Twin selection: the `pyth-lazer-solana-contract` dep below is written to
+# point at the CLEAN twin by default. To run the tests against the planted
+# twin instead, use `scripts/select-twin.sh planted`, which rewrites the
+# path in this file (or apply the .planted overlay by hand). CI drives both
+# twins via the two named leg jobs and the `CASE_TWIN` env var; see
+# ../../../.github/workflows/ci.yml.
+
+# `twin_planted_wire` is declared but NOT enabled on the clean overlay so
+# that `#[cfg(feature = "twin_planted_wire")]` gates in the source do not
+# fire the `unexpected_cfgs` warn-only lint under the clean twin. The
+# planted overlay enables it via `default = ["twin_planted_wire"]`.
+[features]
+twin_planted_wire = []
+
+[dependencies]
+pyth-lazer-solana-contract = { path = "../clean/pyth-lazer-solana-contract" }
+
+anchor-lang = "0.30.1"
+byteorder = "1.5.0"
+# solana-sdk + solana-program-test live in [dependencies] (not
+# [dev-dependencies]) because tests/src/lib.rs imports them at module
+# scope (lines 18-19 and 266). Dev-deps are not visible to the lib
+# target when it is compiled as a dep of the tests/*.rs integration
+# binaries, so leaving them under [dev-dependencies] fails to build.
+solana-program-test = "1.18.26"
+solana-sdk = "1.18.26"
+
+[dev-dependencies]
+ed25519-dalek = { version = "1.0.1", features = ["std"] }
+hex = "0.4.3"
+rand = "0.7.3"
+sha2 = "0.9.9"
+tokio = { version = "1.40.0", features = ["full"] }
