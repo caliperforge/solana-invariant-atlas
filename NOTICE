@@ -8,38 +8,15 @@ This product includes software developed by CaliperForge
 Vendoring statement (top-of-file, load-bearing)
 ------------------------------------------------------------------------
 
-All Anchor reference programs under `references/` are original
-CaliperForge code, licensed under the Apache License, Version 2.0 (see
-LICENSE). One planted-twin case under `cases/` vendors a single
-upstream Apache-2.0 program crate at a pinned commit as a defender-side
-regression fixture; see the "Vendored upstream program crate" section
-below. The attributions below cover tools, libraries, and citation-only
-corpora this repository builds on, consumes as pinned dependencies,
-targets as emit formats, or cites as coverage-map comparators. Zero
-upstream program code (from Trident, Crucible, Anchor, mollusk, LiteSVM,
+No upstream program code is vendored into this repository. All Anchor
+reference programs under `references/` are original CaliperForge code,
+licensed under the Apache License, Version 2.0 (see LICENSE). The
+attributions below cover tools, libraries, and citation-only corpora
+this repository builds on, consumes as pinned dependencies, targets
+as emit formats, or cites as coverage-map comparators. Zero upstream
+program code (from Trident, Crucible, Anchor, mollusk, LiteSVM,
 awesome-trident-tests, or any cited port repository) is copied into
 this repository or its build artifacts.
-
-------------------------------------------------------------------------
-Vendored upstream program crate (single case, pinned commit)
-------------------------------------------------------------------------
-
-The `cases/z1-pyth-lazer-signature-integrity/` case vendors a byte-exact
-snapshot of `pyth-network/pyth-crosschain` at commit
-`eb7f460ab8d1c73c6c8b4942891c9fe74a589121` under
-`lazer/contracts/solana/programs/pyth-lazer-solana-contract/`
-(Apache-2.0, ~640 LOC across `Cargo.toml`, `Xargo.toml`, `src/lib.rs`,
-`src/signature.rs`). The clean twin under
-`cases/z1-pyth-lazer-signature-integrity/clean/pyth-lazer-solana-contract/`
-is unmodified; the planted sibling under
-`cases/z1-pyth-lazer-signature-integrity/planted/pyth-lazer-solana-contract/`
-carries a forked-single-file override on `src/signature.rs` plus a
-one-line dispatcher update in `src/lib.rs` that mechanically reverses
-the security-critical hunk of PR #2250. Upstream license and NOTICE
-terms are preserved via the crate's own `Cargo.toml`
-`license = "Apache-2.0"` key and `VENDOR_PROVENANCE.md` in the vendored
-directory. This is the sole exception to the zero-upstream-program-code
-statement above.
 
 STATUS: this NOTICE is routed to compliance_lead as gate G1 of the
 Phase 1 build spec. The gate object includes: this NOTICE text, the
