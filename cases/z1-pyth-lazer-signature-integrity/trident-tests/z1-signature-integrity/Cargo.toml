@@ -1,0 +1,25 @@
+# Trident v0.12.0 harness crate for C-Z1 (Pyth Lazer signature integrity).
+# Secondary leg: firm-shape overlap credit to Ackee (Trident) for the
+# Solana-Anchor stateful-invariant fuzzer archetype. Primary leg is
+# `solana-program-test` / LiteSVM under `../../tests/`.
+#
+# Additive-only: sits under `trident-tests/z1-signature-integrity/`,
+# never touches the vendored crates under `clean/` or `planted/`.
+# Twin-symmetry: this crate is byte-identical between the twin trees;
+# the twin difference is in the program crate it links against, chosen
+# via the `select-twin.sh` overlay on `../../tests/Cargo.toml`.
+
+[package]
+name = "z1_pyth_lazer_signature_integrity_trident"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+trident-fuzz = "=0.12.0"
+anchor-lang = "0.30.1"
+pyth-lazer-solana-contract = { path = "../../clean/pyth-lazer-solana-contract" }
