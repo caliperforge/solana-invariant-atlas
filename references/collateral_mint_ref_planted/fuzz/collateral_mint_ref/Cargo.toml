@@ -24,6 +24,7 @@ ctrlc          = "3.4"
 libafl         = { version = "0.15.1", features = ["std", "cli", "prelude"] }
 libafl_bolts   = { version = "0.15.1", features = ["std"] }
 collateral_mint_ref = { path = "../../programs/collateral_mint_ref", features = ["no-entrypoint"] }
+rand           = "0.8"
 solana-keypair = "3.0"
 solana-pubkey  = "3.0"
 solana-signer  = "3.0"
