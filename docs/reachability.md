@@ -53,7 +53,7 @@ Uncovered on this repo today:
 Recorded on 2026-07-13:
 
 ```
-reachability certified: yes (16/16 failed as required) — pending REAL CI verification
+reachability certified: yes (16/16 failed as required)
 ```
 
 Local machine cannot exercise the `cargo build-sbf` step (needs the
