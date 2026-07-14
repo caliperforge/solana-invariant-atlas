@@ -6,8 +6,7 @@
 
 Multi-seed reachability certification (Shape A per crypto-contributor
 `D-solana-reachability-leg-shape-2026-07-13`): the planted twins fire
-across a fixed 16-seed set, not just the one seed the base planted CI
-job happens to land on. Merge-gate rule: fail-on-any-clean-seed
+across a fixed 16-seed set. The base planted CI job runs one seed per commit; this leg runs all 16 on every push. Merge-gate rule: fail-on-any-clean-seed
 does-not-merge.
 
 | planted class | planted crate | k/N certified |
