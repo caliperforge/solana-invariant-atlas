@@ -353,6 +353,81 @@ jobs:
           fi
           echo "::notice::${{ matrix.ref }} planted regression tripped the marker (expected, rc=$rc)."
 
+  reachability:
+    # Multi-seed reachability leg (Shape A per crypto-contributor
+    # D-solana-reachability-leg-shape-2026-07-13). Runs the planted
+    # regression bin against every seed in ci/reachability_seeds.txt
+    # (N=16) and requires every seed to exit non-zero + print the
+    # `INVARIANT VIOLATED collateral_authority` marker. This upgrades
+    # the base one-seed regression to a deterministic N-of-N
+    # certification. Sibling to `planted-twin-detects`; uses the same
+    # matrix discovery so a new planted crate picks up the leg
+    # automatically.
+    name: reachability (${{ matrix.ref }})
+    needs: discover
+    if: needs.discover.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.discover.outputs.cells) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip non-crucible cells
+        if: matrix.target != 'crucible'
+        run: |
+          echo "::notice::reachability leg is crucible-target-only; skipping ${{ matrix.target }}."
+          exit 0
+
+      - name: Install Rust from rust-toolchain.toml
+        if: matrix.target == 'crucible'
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Install Anza / Solana CLI ${{ env.SOLANA_VERSION }} (explicit pin, never latest)
+        if: matrix.target == 'crucible'
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/${SOLANA_VERSION}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - name: Pre-create platform-tools cache dir
+        if: matrix.target == 'crucible'
+        run: mkdir -p "$HOME/.cache/solana"
+
+      - name: Verify pinned solana-cli is active
+        if: matrix.target == 'crucible'
+        run: bash scripts/check-solana-pin.sh
+
+      - name: Clone Crucible @ ${{ env.CRUCIBLE_REF }} (sibling to this repo)
+        if: matrix.target == 'crucible'
+        # Path deps in references/*_planted/fuzz/*/Cargo.toml resolve
+        # to `../../../../../crucible/...`. The seeded regression bin
+        # pulls in `crucible-test-context` + `crucible-fuzzer` so it
+        # cannot compile without the sibling checkout.
+        working-directory: ${{ github.workspace }}/..
+        run: |
+          if [ ! -d crucible ]; then
+            git clone --depth 1 --branch "${CRUCIBLE_REF}" \
+              https://github.com/asymmetric-research/crucible.git crucible
+          fi
+          (cd crucible && git rev-parse HEAD)
+
+      - name: cargo build-sbf ${{ matrix.ref }} (planted)
+        if: matrix.target == 'crucible'
+        run: |
+          cargo build-sbf \
+            --tools-version "${SOLANA_TOOLS_VERSION}" \
+            --manifest-path "references/${{ matrix.ref }}_planted/programs/${{ matrix.ref }}/Cargo.toml"
+
+      - name: Multi-seed reachability leg (planted; 16-of-16 required)
+        if: matrix.target == 'crucible'
+        timeout-minutes: 15
+        env:
+          PLANTED_REF: ${{ matrix.ref }}
+        run: |
+          bash ci/reachability_leg.sh
+
   template-lint:
     name: template-lint (adopt/workflow-template.yml)
     runs-on: ubuntu-latest
