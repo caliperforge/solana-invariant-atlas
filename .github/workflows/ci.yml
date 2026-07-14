@@ -402,9 +402,10 @@ jobs:
       - name: Clone Crucible @ ${{ env.CRUCIBLE_REF }} (sibling to this repo)
         if: matrix.target == 'crucible'
         # Path deps in references/*_planted/fuzz/*/Cargo.toml resolve
-        # to `../../../../../crucible/...`. The seeded regression bin
-        # pulls in `crucible-test-context` + `crucible-fuzzer` so it
-        # cannot compile without the sibling checkout.
+        # to `../../../../../crucible/...`. The native reachability leg
+        # invokes the `crucible` CLI directly against the planted twin's
+        # own `#[invariant_test]` harness, so the sibling checkout is
+        # required both for the CLI install AND for path-dep resolution.
         working-directory: ${{ github.workspace }}/..
         run: |
           if [ ! -d crucible ]; then
@@ -413,6 +414,16 @@ jobs:
           fi
           (cd crucible && git rev-parse HEAD)
 
+      - name: Build + install Crucible CLI from ${{ env.CRUCIBLE_REF }}
+        if: matrix.target == 'crucible'
+        working-directory: ${{ github.workspace }}/../crucible
+        run: |
+          if ! command -v crucible >/dev/null 2>&1; then
+            cargo install --path crates/crucible-fuzz-cli --locked || \
+              cargo install --path crates/crucible-fuzz-cli
+          fi
+          crucible --help | head -3
+
       - name: cargo build-sbf ${{ matrix.ref }} (planted)
         if: matrix.target == 'crucible'
         run: |
@@ -420,11 +431,22 @@ jobs:
             --tools-version "${SOLANA_TOOLS_VERSION}" \
             --manifest-path "references/${{ matrix.ref }}_planted/programs/${{ matrix.ref }}/Cargo.toml"
 
-      - name: Multi-seed reachability leg (planted; 16-of-16 required)
+      - name: Native multi-seed reachability leg (Crucible seeded; 16-of-16 required)
+        # Runs `crucible run --seed <s>` 16 times against the planted
+        # twin's `#[invariant_test]`. Each seed drives a distinct
+        # LibAFL+LiteSVM fuzzer campaign (FUZZ_SEED is threaded into the
+        # fuzzer subprocess). A seed passes as required when Crucible
+        # either exits non-zero (crash caught with --stop-on-crash) OR
+        # emits the INVARIANT VIOLATED marker within the per-seed
+        # timeout budget. Verdict shape matches the Foundry / Rust
+        # (proptest) reachability legs on their respective ecosystems.
         if: matrix.target == 'crucible'
-        timeout-minutes: 15
+        timeout-minutes: 20
         env:
           PLANTED_REF: ${{ matrix.ref }}
+          INVARIANT_NAME: invariant_collateral_authority
+          INVARIANT_MARKER: 'INVARIANT VIOLATED collateral_authority'
+          CRUCIBLE_TIMEOUT: ${{ env.CRUCIBLE_TIMEOUT }}
         run: |
           bash ci/reachability_leg.sh
 

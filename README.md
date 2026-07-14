@@ -4,14 +4,19 @@
 
 ## Reachability verdict
 
-Multi-seed reachability certification (Shape A per crypto-contributor
-`D-solana-reachability-leg-shape-2026-07-13`): the planted twins fire
-across a fixed 16-seed set. The base planted CI job runs one seed per commit; this leg runs all 16 on every push. Merge-gate rule: fail-on-any-clean-seed
-does-not-merge.
+Native multi-seed reachability certification via the Solana-native
+Crucible v0.2.0 fuzzer. Sixteen distinct `crucible run --seed <s>`
+campaigns per push (`ci/reachability_leg.sh`); each seed drives a
+distinct LibAFL+LiteSVM fuzzer campaign against the planted twin's
+`#[invariant_test]`. The base planted CI job runs one unseeded campaign
+per commit; this leg runs all 16 seeded campaigns on every push.
+Merge-gate rule: fail-on-any-clean-seed does-not-merge. The k/N cell
+below reflects the latest live CI run on `main`; see `docs/reachability.md`
+for the shape + budget knobs.
 
-| planted class | planted crate | k/N certified |
-| --- | --- | --- |
-| C-A2 collateral_authority | `collateral_mint_ref_planted` | 16/16 (see `docs/reachability.md`) |
+| planted class | planted crate | fuzzer | k/N certified |
+| --- | --- | --- | --- |
+| C-A2 collateral_authority | `collateral_mint_ref_planted` | Crucible v0.2.0 | see live `reachability` CI job |
 
 Uncovered on this repo today: `cases/z1-pyth-lazer-signature-integrity`
 (source not committed yet); the four `cases/*/CITATION.md` cases

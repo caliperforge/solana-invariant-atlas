@@ -1,112 +1,133 @@
-# Multi-seed reachability certification (C-A2 collateral_authority)
+# Native multi-seed reachability certification (C-A2 collateral_authority)
 
 ## What this fixes
 
-The base PLANTED CI job (`planted-twin-detects` in
-`.github/workflows/ci.yml`) runs the Crucible fuzzer once per commit
-and a deterministic regression bin once per commit. Both fire reliably
-today, but "fires reliably" is not "fires deterministically across a
-fixed multi-seed set". A regression that hardcodes a single amount +
-fresh `Keypair::new()` per run is a one-observation receipt, not a
-16-observation receipt.
+The base `planted-twin-detects` CI job runs the Crucible v0.2.0 fuzzer
+once per commit against the planted twin's `#[invariant_test]`. It has
+never passed the CLI a `--seed`, so every run picks a fresh LibAFL RNG
+seed. "One unseeded run trips the invariant" is a single-observation
+receipt: the class fires within budget on ONE fuzzer seed, and any
+future silent flake on that seed would go unnoticed.
 
-The multi-seed reachability leg (`ci/reachability_leg.sh` + the
-`REACHABILITY_SEED`-aware regression bin under each planted crate)
-closes that gap. It runs `cargo run --release --bin regression` under
-`references/*_planted/fuzz/*/` with a distinct `REACHABILITY_SEED` per
-iteration, drawn from a fixed 16-seed set
-(`ci/reachability_seeds.txt`). Every seed must cause the regression to
-exit non-zero AND print the `INVARIANT VIOLATED collateral_authority`
-marker. If any seed passes (rc=0 or missing marker), the leg fails
-and the doc's k/N number goes down instead of quietly staying at
-16/16.
+The native multi-seed reachability leg (`ci/reachability_leg.sh` +
+`.github/workflows/ci.yml::reachability` job) closes that gap. It
+invokes `crucible run <ref> <invariant> --seed <s>` sixteen times, once
+per seed in `ci/reachability_seeds.txt`, and requires the planted twin
+to trip the invariant within a per-seed timeout budget on EVERY seed.
+If any seed escapes (Crucible times out `rc=0` with no `INVARIANT
+VIOLATED` marker), the leg fails and the doc's k/N number goes down
+instead of quietly staying at 16/16.
 
 ## Shape
 
-Shape A per the crypto-contributor design proposal
-`D-solana-reachability-leg-shape-2026-07-13`: regression-bin seeded
-reachability. The Crucible fuzzer's own seed surface (`crucible run`
-CLI) was not extended in this leg; the reachability certification
-lives in the deterministic regression bin. Shape B (fuzzer-seed
-reachability) is deferred; see the design proposal for the rationale.
+The leg is Solana-native: it runs the same LibAFL+LiteSVM fuzzer that
+already ships the base planted-twin catch, just re-seeded 16 times.
+Crucible v0.2.0's fuzz CLI (`crates/crucible-fuzz-cli`) accepts
+`--seed <u64>` and threads it through to the fuzzer subprocess as the
+`FUZZ_SEED` environment variable. Each seed produces a genuinely
+distinct fuzzer campaign; the invariant must fire within the timeout
+budget on every one.
+
+This supersedes the earlier `Shape A` regression-bin leg (per
+`D-solana-native-reachability-supersede-2026-07-14`, queued for CEO
+ratification alongside this landing). The deterministic
+`src/bin/regression.rs` binary is retained as a fast developer-flow
+smoke test (fixed-sequence fallback that runs in seconds locally) but
+the CI reachability leg no longer wraps it: the CI receipt is now the
+fuzzer's own catch, not a hand-authored replay.
 
 ## Coverage
 
-| planted class | planted crate | certifies against | verdict |
+| planted class | planted crate | fuzzer | verdict |
 | --- | --- | --- | --- |
-| C-A2 collateral_authority | `collateral_mint_ref_planted` | mint-equality constraint removal | 16/16 (per local run, before push) |
+| C-A2 collateral_authority | `collateral_mint_ref_planted` | Crucible v0.2.0 | see `reachability` CI job for the latest live k/N |
 
 Uncovered on this repo today:
 
 - `cases/z1-pyth-lazer-signature-integrity/planted/`: source not yet
   committed to git; only compiled `target/` artefacts present locally.
-  Reachability leg cannot cover a case whose planted twin sources are
-  not present. Deferred to the case's own follow-up dispatch.
+  Reachability cannot cover a case whose planted twin sources are not
+  present. Deferred to the case's own follow-up dispatch.
 - `cases/03-jito`, `cases/04-jito-priorityfee`, `cases/05-jito-tippayment`,
   `cases/06-pyth-solana-receiver`: CITATION-only cases (each ships a
   single `CITATION.md` pointing at the sibling real-target repo). No
   local planted twin. Reachability lives in the cited sibling repo's
   own CI, not here.
 
-## Verdict
+## Verdict source of truth
 
-Recorded on 2026-07-13:
+The k/N verdict recorded in `README.md` reflects the latest live CI run
+on `main`. The load-bearing artefact is the `reachability` job in
+`.github/workflows/ci.yml`; the job's step summary emits a per-seed
+table (`seed (hex) | seed (dec) | outcome | rc | markers`) followed by
+`reachability certified: yes (16/16 failed as required)` on success or
+`reachability certified: no (k/N failed; missed on seeds ...)` on
+partial coverage. Uncovered seeds are named explicitly so a future
+harness tightening (larger budget, richer action mix) has a concrete
+handle to reduce them.
+
+## How the seeded native leg works
+
+Per seed the leg runs:
 
 ```
-reachability certified: yes (16/16 failed as required)
+crucible run <planted_ref> invariant_collateral_authority \
+  --release \
+  --seed <decimal-u64> \
+  --timeout <T> \
+  --stop-on-crash
 ```
 
-Local machine cannot exercise the `cargo build-sbf` step (needs the
-Anza / Solana CLI on pinned platform-tools v1.52); the leg is
-verified end-to-end on GitHub Actions instead. See the `reachability`
-job in `.github/workflows/ci.yml` and the linked run for the
-byte-recorded per-seed table.
+The bash driver at `ci/reachability_leg.sh` converts each hex seed from
+`ci/reachability_seeds.txt` to decimal (Crucible parses `--seed` as a
+`u64` in the clap sense; the seed file itself stays byte-identical to
+`caliperforge/crypto-contributor:scripts/reachability/seeds.txt`).
+Crucible sets `FUZZ_SEED` into the fuzzer subprocess (see
+`crates/crucible-fuzz-cli/src/lib.rs`), which controls the LibAFL RNG
+that drives action selection, argument drawing, and state-pool ordering
+for the planted twin's `#[invariant_test]` harness. `--stop-on-crash`
+returns as soon as the invariant fires so the leg does not burn the
+full timeout on the norm case.
 
-## How the seeded regression works
+A seed "passes as required" if EITHER:
 
-`references/collateral_mint_ref_planted/fuzz/collateral_mint_ref/src/bin/regression.rs`
-reads the `REACHABILITY_SEED` env var (16-hex-char u64, optional `0x`
-prefix), expands the 8 bytes to a 32-byte seed by tiling (same shape
-as the Soroban lane's `tests/reachability.rs`), constructs a
-`rand::rngs::StdRng` from it, and derives:
+- Crucible exits non-zero (`stop_on_crash` fired on the invariant), OR
+- Crucible's stdout emits at least one `INVARIANT VIOLATED
+  collateral_authority` marker within the timeout.
 
-- the deposit + mint_receipts amount (via `rng.gen_range(1..=1_000_000)`)
-- the payer secret bytes (via `rng.fill_bytes` + `Keypair::new_from_array`)
-- the user secret bytes (via `rng.fill_bytes` + `Keypair::new_from_array`)
-
-The Anchor `initialize_bank` / `deposit` / `mint_receipts` sequence
-and the final `bank.total_receipts_minted != expected_receipts` assert
-are unchanged. Two features of that shape:
-
-- If `REACHABILITY_SEED` is absent, the regression uses the previous
-  fixed amount (12_345) + fresh `Keypair::new()` and existing developer
-  flow (`cargo run --release --bin regression`) is unchanged.
-- The only semantic delta between the regression and the seeded
-  regression is the RNG scaffolding; a reviewer diffing the file
-  version-to-version sees only the seeded-input hookup and no new
-  action or assertion.
+A seed "escapes" if Crucible completes the full timeout with `rc=0` and
+no marker: the fuzzer failed to reach the class within budget on that
+seed. Escaped seeds are named in the verdict line and in `docs/reachability.md`
+so per-class budget tuning has a concrete handle.
 
 ## Merge-gate rule
 
 No new planted twin merges to `main` unless the `reachability` job
 exits green (fail-on-all-N). If a new planted twin cannot certify at
-the default budget (16-seed regression), the case owner:
+the default budget (16-seed Crucible run at
+`CRUCIBLE_TIMEOUT=${env.CRUCIBLE_TIMEOUT}`s), the case owner:
 
-1. Extends the seeded regression's action mix in `regression.rs`
-   until the leg certifies, OR
-2. Documents an honest caveat in the case's README stating the k/N
-   number the case currently achieves.
+1. Extends the planted twin's Crucible harness action mix in
+   `src/main.rs` until the leg certifies, OR
+2. Raises the `CRUCIBLE_TIMEOUT` for that job (recorded per-case in
+   this doc so the budget is legible), OR
+3. Documents an honest caveat in the case's README stating the k/N the
+   case currently achieves and which specific seeds escape.
 
-Each new planted crate that ships a `regression.rs` MUST make it
-`REACHABILITY_SEED`-aware. Copy from `collateral_mint_ref_planted`.
+Any planted crate that ships a Crucible `#[invariant_test]` harness IS
+picked up automatically via the `discover` job's `references/*_ref +
+references/*_planted` scan; the reachability leg drops in with the
+same additive diff.
 
 ## Seed set
 
 The seed list is a fixed, deterministic mix of small integers, common
 test patterns, and pseudo-random-looking bytes. It is not regenerated
 per run. `ci/reachability_seeds.txt` is byte-identical to
-`caliperforge/crypto-contributor/scripts/reachability/seeds.txt`; the
-two files are the single source of truth for the canonical set.
+`caliperforge/crypto-contributor:scripts/reachability/seeds.txt`; the
+two files are the single source of truth for the canonical set. Bash
+`printf %llu 0x<hex>` handles the full u64 range up to
+`0xffffffffffffffff` cleanly.
 
 ## Reuse
 
@@ -115,5 +136,6 @@ The canonical scripts this leg mirrors live at
 matches `caliperforge/soroban-invariant-atlas:ci/reachability_leg.sh`
 (the C-A1 Blend V2 H-01 landing). Future Solana / Anchor / Crucible
 planted twins lift `ci/reachability_leg.sh`, `ci/reachability_seeds.txt`,
-this doc, and the `parse_seed_env` + `keypair_from_rng` scaffolding
-verbatim.
+this doc, and the workflow reachability job verbatim; the only per-crate
+knob is the `PLANTED_REF` / `INVARIANT_NAME` / `INVARIANT_MARKER` env
+vars set in the workflow step.
